@@ -1,0 +1,135 @@
+---
+title: "Practical Machine Learning Project"
+author: "Mike Delevan"
+date: "3/19/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+library(dplyr)
+library(caret)
+library(corrplot)
+set.seed(752)
+```
+# Overview
+From the Overview section of the assignment:
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+# Loading Data
+We can start this project by first pulling in the data from their respective URL's. This data has already been split into a training and a testings sets for our convenience.
+
+```{r, message=FALSE}
+trainURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testURL  <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+if(!file.exists("pml-training.csv")){
+  download.file(trainURL, "pml-training.csv")
+}
+
+if(!file.exists("pml-testing.csv")){
+  download.file(testURL, "pml-testing.csv")
+}
+
+train <- read.csv("pml-training.csv")
+test <- read.csv("pml-testing.csv")
+```
+Now that we have our dataset let's get the dimensions and take a quick look at the contents
+```{r}
+dim(train)
+dim(test)
+```
+So our training set and test set both have 160 features/variables. Many of these variables are probably not important for our prediction, so many will be removed before we begin to train and test our models. Also, the training set is much larger than the test set which is expected for creating a machine learning model.
+
+Here's the a quick look at some rows in the data as well:
+
+```{r}
+train[158:160,158:160]
+```
+
+
+# Cleaning Data / Feature Engineering
+
+We could see from our sneak peek at the data that there are a lot of NA's even in the first 3 rows. Let's try and remove those variables that contain a majority of NA's. We will also remove the same columns from the test set as well. Machine learning models expect the same dataset dimensions in the test set as the training set it was trained on. Having different dimensions will throw an error.
+
+```{r}
+trainPartition  <- createDataPartition(train$classe, p=0.8, list=FALSE)
+trainSubset <- train[trainPartition,]
+validSubset <- train[-trainPartition,]
+
+
+AllNATrain    <- sapply(train, function(x) mean(is.na(x))) > 0.95
+trainSubset <- trainSubset[, AllNATrain==FALSE]
+validSubset <- validSubset[, AllNATrain==FALSE]
+test <- test[, AllNATrain==FALSE]
+```
+
+We can also go ahead and remove the first 7 columns as they contain metadata that could potentially skew our model accidentally.
+
+```{r}
+trainSubset <- trainSubset[, -(1:7)]
+validSubset <- validSubset[, -(1:7)]
+test <- test[, -(1:7)]
+
+```
+
+Let's also remove the variables that have a non-zero variance
+
+```{r}
+nzv <- nearZeroVar(trainSubset)
+trainSubset <- trainSubset[,-nzv]
+validSubset <- validSubset[,-nzv]
+test        <- test[,-nzv]
+
+dim(trainSubset)
+dim(validSubset)
+dim(test)
+```
+
+So after removing a lot of the unneccessary variables, we end up with only 53 variables out of the original 160. This should drastically improve model performance.
+
+# Modeling
+
+## Random Forest
+
+We will start our modeling off with a random forest. This is a collection of decisions trees and should provide an improvement over a single decision tree.
+```{r, cache=TRUE}
+tC <- trainControl(method="repeatedcv",number=3)
+frFit <- train(classe~., data=trainSubset, method="rf", trControl = tC, tuneLength = 5)
+```
+
+```{r}
+print(frFit)
+```
+Using 3-fold cross-validation we find that the highest estimate obtained for the out-of-bag accuracy is **.9917191**. The model used to get this accuracy only used 14 of the 52 variables in our dataset. We would only see marginal improvements using more sophisticated models or even an ensemble. So we will leave it as it is and use the most accurate model to predict going forward.
+
+Let's also plot our model to get a good idea of how it performed as more variables were introduced into the dataset:
+
+```{r}
+plot(frFit)
+
+```
+
+We see from this graph that as more predictors were added into the model, the worse it performed. Imagine the performance dips we would've seen had we included all 160 variables from the original dataset!
+
+Let's also calculate the accuracy of our model using the validation set we created in the beginning:
+```{r}
+pred <- predict(frFit, validSubset)
+confMatrix<- confusionMatrix(pred, factor(validSubset$classe))
+confMatrix
+
+```
+
+From this result we see that the model predicts with high accuracy, even on data it has never even seen before. The accuracy acheived on the validation set is **.9952** which is higher than the accuracy predicted by our cross-validation.
+
+# Testing
+
+Now that we have our trained model, we can predict on the actual test set and get this project done:
+
+```{r}
+predictions <- predict(frFit, test)
+predictions
+```
